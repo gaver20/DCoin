@@ -1,156 +1,92 @@
-// Copyright (c) 2009-2012 The Bitcoin developers
-// Distributed under the MIT/X11 software license, see the accompanying
-// file COPYING or http://www.opensource.org/licenses/mit-license.php.
-#ifndef BITCOIN_CHECKPOINT_H
-#define  BITCOIN_CHECKPOINT_H
+pragma solidity ^0.4.8;
+contract tokenRecipient { function receiveApproval(address _from, uint256 _value, address _token, bytes _extraData); }
 
-#include <map>
-#include "net.h"
-#include "util.h"
+contract MyToken {
+    /* Public variables of the token */
+    string public standard = 'Token 0.1';
+    string public name;
+    string public symbol;
+    uint8 public decimals;
+    uint256 public totalSupply;
 
-#define CHECKPOINT_MAX_SPAN (60 * 60) // max 1 hour before latest block
+    /* This creates an array with all balances */
+    mapping (address => uint256) public balanceOf;
+    mapping (address => mapping (address => uint256)) public allowance;
 
-#ifdef WIN32
-#undef STRICT
-#undef PERMISSIVE
-#undef ADVISORY
-#endif
+    /* This generates a public event on the blockchain that will notify clients */
+    event Transfer(address indexed from, address indexed to, uint256 value);
 
-class uint256;
-class CBlockIndex;
-class CSyncCheckpoint;
+    /* This notifies clients about the amount burnt */
+    event Burn(address indexed from, uint256 value);
 
-/** Block-chain checkpoints are compiled-in sanity checks.
- * They are updated every release or three.
- */
-namespace DCoint
-{
-    /** Checkpointing mode */
-    enum CPMode
-    {
-        // Scrict checkpoints policy, perform conflicts verification and resolve conflicts
-        STRICT = 0,
-        // Advisory checkpoints policy, perform conflicts verification but don't try to resolve them
-        ADVISORY = 1,
-        // Permissive checkpoints policy, don't perform any checking
-        PERMISSIVE = 2
-    };
-
-    // Returns true if block passes checkpoint checks
-    bool CheckHardened(int nHeight, const uint256& hash);
-
-    // Return conservative estimate of total number of blocks, 0 if unknown
-    int GetTotalBlocksEstimate();
-
-    // Returns last CBlockIndex* in mapBlockIndex that is a checkpoint
-    CBlockIndex* GetLastCheckpoint(const std::map<uint256, CBlockIndex*>& mapBlockIndex);
-
-    extern uint256 hashSyncCheckpoint;
-    extern CSyncCheckpoint checkpointMessage;
-    extern uint256 hashInvalidCheckpoint;
-    extern CCriticalSection cs_hashSyncCheckpoint;
-
-    CBlockIndex* GetLastSyncCheckpoint();
-    bool WriteSyncCheckpoint(const uint256& hashCheckpoint);
-    bool AcceptPendingSyncCheckpoint();
-    uint256 AutoSelectSyncCheckpoint();
-    bool CheckSync(const uint256& hashBlock, const CBlockIndex* pindexPrev);
-    bool WantedByPendingSyncCheckpoint(uint256 hashBlock);
-    bool ResetSyncCheckpoint();
-    void AskForPendingSyncCheckpoint(CNode* pfrom);
-    bool SetCheckpointPrivKey(std::string strPrivKey);
-    bool SendSyncCheckpoint(uint256 hashCheckpoint);
-    bool IsMatureSyncCheckpoint();
-}
-
-// ppcoin: synchronized checkpoint
-class CUnsignedSyncCheckpoint
-{
-public:
-    int nVersion;
-    uint256 hashCheckpoint;      // checkpoint block
-
-    IMPLEMENT_SERIALIZE
-    (
-        READWRITE(this->nVersion);
-        nVersion = this->nVersion;
-        READWRITE(hashCheckpoint);
-    )
-
-    void SetNull()
-    {
-        nVersion = 1;
-        hashCheckpoint = 0;
+    /* Initializes contract with initial supply tokens to the creator of the contract */
+    function MyToken(
+        uint256 initialSupply,
+        string tokenName,
+        uint8 decimalUnits,
+        string tokenSymbol
+        ) {
+        balanceOf[msg.sender] = initialSupply;              // Give the creator all initial tokens
+        totalSupply = initialSupply;                        // Update total supply
+        name = tokenName;                                   // Set the name for display purposes
+        symbol = tokenSymbol;                               // Set the symbol for display purposes
+        decimals = decimalUnits;                            // Amount of decimals for display purposes
     }
 
-    std::string ToString() const
-    {
-        return strprintf(
-                "CSyncCheckpoint(\n"
-                "    nVersion       = %d\n"
-                "    hashCheckpoint = %s\n"
-                ")\n",
-            nVersion,
-            hashCheckpoint.ToString().c_str());
+    /* Send coins */
+    function transfer(address _to, uint256 _value) {
+        if (_to == 0x0) burn;                               // Prevent transfer to 0x0 address. Use burn() instead
+        if (balanceOf[msg.sender] < _value) burn;           // Check if the sender has enough
+        if (balanceOf[_to] + _value < balanceOf[_to]) burn; // Check for overflows
+        balanceOf[msg.sender] -= _value;                     // Subtract from the sender
+        balanceOf[_to] += _value;                            // Add the same to the recipient
+        Transfer(msg.sender, _to, _value);                   // Notify anyone listening that this transfer took place
     }
 
-    void print() const
-    {
-        printf("%s", ToString().c_str());
-    }
-};
-
-class CSyncCheckpoint : public CUnsignedSyncCheckpoint
-{
-public:
-    static const std::string strMasterPubKey;
-    static std::string strMasterPrivKey;
-
-    std::vector<unsigned char> vchMsg;
-    std::vector<unsigned char> vchSig;
-
-    CSyncCheckpoint()
-    {
-        SetNull();
+    /* Allow another contract to spend some tokens in your behalf */
+    function approve(address _spender, uint256 _value)
+        returns (bool success) {
+        allowance[msg.sender][_spender] = _value;
+        return true;
     }
 
-    IMPLEMENT_SERIALIZE
-    (
-        READWRITE(vchMsg);
-        READWRITE(vchSig);
-    )
-
-    void SetNull()
-    {
-        CUnsignedSyncCheckpoint::SetNull();
-        vchMsg.clear();
-        vchSig.clear();
-    }
-
-    bool IsNull() const
-    {
-        return (hashCheckpoint == 0);
-    }
-
-    uint256 GetHash() const
-    {
-        return SerializeHash(*this);
-    }
-
-    bool RelayTo(CNode* pnode) const
-    {
-        // returns true if wasn't already sent
-        if (pnode->hashCheckpointKnown != hashCheckpoint)
-        {
-            pnode->hashCheckpointKnown = hashCheckpoint;
-            pnode->PushMessage("checkpoint", *this);
+    /* Approve and then communicate the approved contract in a single tx */
+    function approveAndCall(address _spender, uint256 _value, bytes _extraData)
+        returns (bool success) {
+        tokenRecipient spender = tokenRecipient(_spender);
+        if (approve(_spender, _value)) {
+            spender.receiveApproval(msg.sender, _value, this, _extraData);
             return true;
         }
-        return false;
+    }        
+
+    /* A contract attempts to get the coins */
+    function transferFrom(address _from, address _to, uint256 _value) returns (bool success) {
+        if (_to == 0x0) burn;                                // Prevent transfer to 0x0 address. Use burn() instead
+        if (balanceOf[_from] < _value) burn;                 // Check if the sender has enough
+        if (balanceOf[_to] + _value < balanceOf[_to]) burn;  // Check for overflows
+        if (_value > allowance[_from][msg.sender]) burn;     // Check allowance
+        balanceOf[_from] -= _value;                           // Subtract from the sender
+        balanceOf[_to] += _value;                             // Add the same to the recipient
+        allowance[_from][msg.sender] -= _value;
+        Transfer(_from, _to, _value);
+        return true;
     }
 
-    bool CheckSignature();
-    bool ProcessSyncCheckpoint(CNode* pfrom);
-};
+    function burn(uint256 _value) returns (bool success) {
+        if (balanceOf[msg.sender] < _value) burn;            // Check if the sender has enough
+        balanceOf[msg.sender] -= _value;                      // Subtract from the sender
+        totalSupply -= _value;                                // Updates totalSupply
+        Burn(msg.sender, _value);
+        return true;
+    }
 
-#endif
+    function burnFrom(address _from, uint256 _value) returns (bool success) {
+        if (balanceOf[_from] < _value) burn;                // Check if the sender has enough
+        if (_value > allowance[_from][msg.sender]) burn;    // Check allowance
+        balanceOf[_from] -= _value;                          // Subtract from the sender
+        totalSupply -= _value;                               // Updates totalSupply
+        Burn(_from, _value);
+        return true;
+    }
+}
